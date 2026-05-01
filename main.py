@@ -68,10 +68,20 @@ class CheckerManager:
         return future.result()
 
     async def _send_code(self, user_id, phone):
+        session_path = f'sessions/checker_{user_id}.session'
         client = self.get_client(user_id)
-        if not client.is_connected():
+        try:
+            if not client.is_connected():
+                await client.connect()
+            return await client.send_code_request(phone)
+        except (errors.AuthKeyDuplicatedError, errors.SessionPasswordNeededError, errors.SessionRevokedError):
+            # If session is compromised or dirty, kill it and start over
+            await client.disconnect()
+            if os.path.exists(session_path): os.remove(session_path)
+            if user_id in self.clients: del self.clients[user_id]
+            client = self.get_client(user_id)
             await client.connect()
-        return await client.send_code_request(phone)
+            return await client.send_code_request(phone)
 
     def send_code(self, user_id, phone):
         future = asyncio.run_coroutine_threadsafe(self._send_code(user_id, phone), self.loop)
@@ -87,11 +97,19 @@ class CheckerManager:
 
     async def _logout(self, user_id):
         client = self.get_client(user_id)
-        if not client.is_connected():
-            await client.connect()
-        await client.log_out()
-        if user_id in self.clients:
-            del self.clients[user_id]
+        session_path = f'sessions/checker_{user_id}.session'
+        try:
+            if not client.is_connected():
+                await client.connect()
+            await client.log_out()
+        except: pass
+        finally:
+            await client.disconnect()
+            if user_id in self.clients:
+                del self.clients[user_id]
+            if os.path.exists(session_path):
+                try: os.remove(session_path)
+                except: pass
 
     def logout(self, user_id):
         future = asyncio.run_coroutine_threadsafe(self._logout(user_id), self.loop)
