@@ -58,14 +58,20 @@ class CheckerManager:
         return self.clients[user_id]
 
     async def _is_authorized(self, user_id):
-        client = self.get_client(user_id)
-        if not client.is_connected():
-            await client.connect()
-        return await client.is_user_authorized()
+        try:
+            client = self.get_client(user_id)
+            if not client.is_connected():
+                await asyncio.wait_for(client.connect(), timeout=5)
+            return await asyncio.wait_for(client.is_user_authorized(), timeout=5)
+        except:
+            return False
 
     def is_authorized(self, user_id):
-        future = asyncio.run_coroutine_threadsafe(self._is_authorized(user_id), self.loop)
-        return future.result()
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._is_authorized(user_id), self.loop)
+            return future.result(timeout=10)
+        except:
+            return False
 
     async def _send_code(self, user_id, phone):
         session_path = f'sessions/checker_{user_id}.session'
@@ -384,11 +390,16 @@ def show_main_menu(message):
 def prompt_setup_checker(message):
     user_id = message.from_user.id
     init_user(user_id)
-    if checker.is_authorized(user_id):
-        bot.reply_to(message, "✅ You already have an active checker session! If you want to replace it, use 🗑️ Remove Checker first.")
-        return
-    users_db[user_id]['state'] = 'WAITING_FOR_CHECKER_PHONE'
-    bot.reply_to(message, "📞 Enter your checking Account Phone Number (including country code, e.g. +880...):\n\n*Make sure you have started `@TelCheckers_bot` on this account first!*")
+    msg = bot.reply_to(message, "⏳ *Checking current session status...*", parse_mode="Markdown")
+    try:
+        if checker.is_authorized(user_id):
+            bot.edit_message_text("✅ You already have an active checker session! If you want to replace it, use 🗑️ Remove Checker first.", message.chat.id, msg.message_id)
+            return
+        users_db[user_id]['state'] = 'WAITING_FOR_CHECKER_PHONE'
+        bot.edit_message_text("📞 *Enter your checking Account Phone Number*\n(including country code, e.g. +880...):\n\n*Make sure you have started `@TelCheckers_bot` on this account first!*", message.chat.id, msg.message_id, parse_mode="Markdown")
+    except Exception as e:
+        users_db[user_id]['state'] = 'WAITING_FOR_CHECKER_PHONE'
+        bot.edit_message_text(f"⚠️ Checker system warning, but you can try anyway.\n📞 Enter Phone Number (+880...):", message.chat.id, msg.message_id)
 
 @bot.message_handler(func=lambda message: message.text == '🗑️ Remove Checker')
 @access_required
